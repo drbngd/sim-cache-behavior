@@ -1,3 +1,10 @@
+# to push code to current branch
+git branch                                    # verify you're on the right branch
+git status                                    # see what files changed
+git add -A                                    # stage all changes
+git commit -m "your commit message here"      # commit with a message
+git push origin $(git branch --show-current)  # push to current branch
+
 # to merge current branch to main
 git branch
 git add -A

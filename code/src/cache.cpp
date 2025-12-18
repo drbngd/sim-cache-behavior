@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <stdint.h>
 #include <stdlib.h>
-#include <string.h>
 
 /* Cache Statistics */
 uint32_t stat_i_cache_read_misses = 0;
@@ -13,8 +12,6 @@ uint32_t stat_i_cache_read_hits = 0;
 uint32_t stat_d_cache_read_hits = 0;
 uint32_t stat_i_cache_write_hits = 0;
 uint32_t stat_d_cache_write_hits = 0;
-
-
 
 
 /* global variable -- cache */
@@ -79,12 +76,13 @@ void Cache::evict(uint32_t tag, uint32_t set_index, uint32_t way)
    
 }
 
-void Cache::fetch(uint32_t address, uint32_t tag, uint32_t set_index, uint32_t way)
+void Cache::fetch(uint32_t address, uint32_t tag, Cache_Line& line)
 {
-    /* we are supposed to fetch 4 words at a time, depening on line size */ 
-    auto& line = sets[set_index].lines[way];
+    /* we are supposed to fetch the entire cache line starting from line-aligned address */ 
+    /* Compute line-aligned base address */
+    uint32_t line_base = address & ~(CACHE_LINE_SIZE - 1);
     for (auto i = 0; i < CACHE_LINE_SIZE; i+=4) {
-        uint32_t word = mem_read_32((address + i) & ~3);
+        uint32_t word = mem_read_32(line_base + i);
         line.data[i+3] = (word >> 24) & 0xFF;
         line.data[i+2] = (word >> 16) & 0xFF;
         line.data[i+1] = (word >>  8) & 0xFF;
@@ -93,7 +91,9 @@ void Cache::fetch(uint32_t address, uint32_t tag, uint32_t set_index, uint32_t w
 
     line.valid = true;
     line.dirty = false;
-    line.last_touch_tick = stat_cycles;
+    /* Set LRU timestamp to when the access COMPLETES (after miss penalty),
+       not when it was initiated. This ensures correct LRU ordering. */
+    line.last_touch_tick = stat_cycles + miss_penalty;
     line.tag = tag;
 }
 
@@ -117,6 +117,8 @@ Cache_Result Cache::read(uint32_t address)
 
     uint32_t way = lookup(set, tag);
     if (way != UINT32_MAX) {
+        /* Update LRU on hit */
+        set[way].last_touch_tick = stat_cycles;
         return {static_cast<uint32_t>(
                (set[way].data[offset+3] << 24) |
                (set[way].data[offset+2] << 16) |
@@ -131,7 +133,7 @@ Cache_Result Cache::read(uint32_t address)
     /* no latency added for a dirty evict */
     evict(tag, set_index, victim_way);
 
-    fetch(address, tag, set_index, victim_way);
+    fetch(address, tag, set[victim_way]);
     return {static_cast<uint32_t>(
            (set[victim_way].data[offset+3] << 24) |
            (set[victim_way].data[offset+2] << 16) |
@@ -150,6 +152,8 @@ Cache_Result Cache::write(uint32_t address, uint32_t value)
 
     uint32_t way = lookup(set, tag);
     if (way != UINT32_MAX) {
+        /* Update LRU on hit */
+        set[way].last_touch_tick = stat_cycles;
         /* write */
         set[way].dirty = true;
         set[way].data[offset+3] = (value >> 24) & 0xFF;
@@ -162,7 +166,7 @@ Cache_Result Cache::write(uint32_t address, uint32_t value)
     uint32_t victim_way = find_victim(set_index);
     evict(tag, set_index, victim_way);
 
-    fetch(address, tag, set_index, victim_way);
+    fetch(address, tag, set[victim_way]);
     set[victim_way].dirty = true;
     set[victim_way].data[offset+3] = (value >> 24) & 0xFF;
     set[victim_way].data[offset+2] = (value >> 16) & 0xFF;

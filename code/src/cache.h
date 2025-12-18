@@ -53,7 +53,7 @@ private:
     uint32_t find_victim(uint32_t set_index) const;
     uint32_t find_victim_lru(uint32_t set_index) const;
     void evict(uint32_t tag, uint32_t set_index, uint32_t way);
-    void fetch(uint32_t address, uint32_t tag, uint32_t set_index, uint32_t way);
+    void fetch(uint32_t address, uint32_t tag, Cache_Line& line);
     uint32_t lookup(std::vector<Cache_Line>& set, uint32_t tag);
 
 public:
