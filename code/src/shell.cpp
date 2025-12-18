@@ -16,8 +16,6 @@
 #include <cstring>
 #include <cstdint>
 #include <vector>
-#include <memory>
-
 #include "shell.h"
 #include "pipe.h"
 
