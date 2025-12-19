@@ -10,7 +10,7 @@ venv/
 __pycache__/
 
 # Results and analysis outputs
-results/
+# results/
 
 
 # Editor/IDE files

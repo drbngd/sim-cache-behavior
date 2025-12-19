@@ -1,0 +1,163 @@
+================================================================================
+Cache Parameter Sweep Analysis Report
+================================================================================
+
+SUMMARY STATISTICS
+--------------------------------------------------------------------------------
+cycles:
+  Mean: 1330551.0531
+  Std:  3555277.8165
+  Min:  7768.0000
+  Max:  14942483.0000
+
+ipc:
+  Mean: 0.4270
+  Std:  0.2618
+  Min:  0.0570
+  Max:  0.8060
+
+d_cache_miss_rate:
+  Mean: 0.2428
+  Std:  0.3430
+  Min:  0.0000
+  Max:  1.0000
+
+i_cache_miss_rate:
+  Mean: 0.0000
+  Std:  0.0001
+  Min:  0.0000
+  Max:  0.0010
+
+
+TOP 5 CONFIGURATIONS BY IPC
+--------------------------------------------------------------------------------
+225. Sets: 1024.0, Line: 2048.0B, Assoc: 16.0-way, IPC: 0.6190
+178. Sets: 512.0, Line: 2048.0B, Assoc: 4.0-way, IPC: 0.6190
+179. Sets: 512.0, Line: 2048.0B, Assoc: 8.0-way, IPC: 0.6190
+86. Sets: 128.0, Line: 2048.0B, Assoc: 1.0-way, IPC: 0.6190
+180. Sets: 512.0, Line: 2048.0B, Assoc: 16.0-way, IPC: 0.6190
+
+
+PARAMETER IMPACT ANALYSIS
+--------------------------------------------------------------------------------
+
+Cache Size Impact on IPC:
+  0.50KB: IPC = 0.1646 ± 0.1782
+  1.00KB: IPC = 0.1817 ± 0.1808
+  2.00KB: IPC = 0.1972 ± 0.1864
+  4.00KB: IPC = 0.2113 ± 0.1922
+  8.00KB: IPC = 0.2309 ± 0.2037
+  16.00KB: IPC = 0.2682 ± 0.2180
+  32.00KB: IPC = 0.3072 ± 0.2272
+  64.00KB: IPC = 0.4021 ± 0.2525
+  128.00KB: IPC = 0.4492 ± 0.2579
+  256.00KB: IPC = 0.5138 ± 0.2324
+  512.00KB: IPC = 0.5442 ± 0.2222
+  1024.00KB: IPC = 0.5673 ± 0.2126
+  2048.00KB: IPC = 0.5843 ± 0.2044
+  4096.00KB: IPC = 0.5948 ± 0.1985
+  8192.00KB: IPC = 0.6040 ± 0.1938
+  16384.00KB: IPC = 0.6120 ± 0.1911
+  32768.00KB: IPC = 0.6190 ± 0.1928
+
+Line Size Impact on D-Cache Miss Rate:
+  8B: Miss Rate = 0.5565 ± 0.3329
+  16B: Miss Rate = 0.4570 ± 0.3802
+  32B: Miss Rate = 0.3900 ± 0.4084
+  64B: Miss Rate = 0.3088 ± 0.3871
+  128B: Miss Rate = 0.1913 ± 0.2795
+  256B: Miss Rate = 0.1186 ± 0.2217
+  512B: Miss Rate = 0.0736 ± 0.1730
+  1024B: Miss Rate = 0.0510 ± 0.1455
+  2048B: Miss Rate = 0.0386 ± 0.1222
+
+Associativity Impact on IPC:
+  1-way: IPC = 0.3903 ± 0.2697
+  2-way: IPC = 0.4127 ± 0.2671
+  4-way: IPC = 0.4355 ± 0.2576
+  8-way: IPC = 0.4445 ± 0.2561
+  16-way: IPC = 0.4520 ± 0.2540
+
+
+BENCHMARK ANALYSIS
+--------------------------------------------------------------------------------
+
+cache_stress:
+  Avg IPC: 0.5952
+  Avg D-Cache Miss Rate: 0.0447
+  Avg Cycles: 811364
+
+gups:
+  Avg IPC: 0.5965
+  Avg D-Cache Miss Rate: 0.1454
+  Avg Cycles: 577700
+
+matrix_col:
+  Avg IPC: 0.2960
+  Avg D-Cache Miss Rate: 0.5639
+  Avg Cycles: 551400
+
+matrix_transpose:
+  Avg IPC: 0.4662
+  Avg D-Cache Miss Rate: 0.1688
+  Avg Cycles: 158185
+
+pointer_chase:
+  Avg IPC: 0.6285
+  Avg D-Cache Miss Rate: 0.0434
+  Avg Cycles: 134830
+
+stencil:
+  Avg IPC: 0.2173
+  Avg D-Cache Miss Rate: 0.0949
+  Avg Cycles: 260487
+
+stream_large:
+  Avg IPC: 0.4636
+  Avg D-Cache Miss Rate: 0.1109
+  Avg Cycles: 749393
+
+stream_triad:
+  Avg IPC: 0.4170
+  Avg D-Cache Miss Rate: 0.2626
+  Avg Cycles: 223809
+
+streaming:
+  Avg IPC: 0.7980
+  Avg D-Cache Miss Rate: 0.0001
+  Avg Cycles: 82133
+
+stride_32:
+  Avg IPC: 0.2736
+  Avg D-Cache Miss Rate: 0.4427
+  Avg Cycles: 226926
+
+stride_64:
+  Avg IPC: 0.2159
+  Avg D-Cache Miss Rate: 0.5521
+  Avg Cycles: 135448
+
+strided:
+  Avg IPC: 0.2153
+  Avg D-Cache Miss Rate: 0.5521
+  Avg Cycles: 33912
+
+vector_add:
+  Avg IPC: 0.4601
+  Avg D-Cache Miss Rate: 0.2626
+  Avg Cycles: 203323
+
+working_set:
+  Avg IPC: 0.5807
+  Avg D-Cache Miss Rate: 0.0493
+  Avg Cycles: 1681590
+
+working_set_1gb:
+  Avg IPC: 0.1050
+  Avg D-Cache Miss Rate: 0.5000
+  Avg Cycles: 14942314
+
+write_intensive:
+  Avg IPC: 0.5031
+  Avg D-Cache Miss Rate: 0.0918
+  Avg Cycles: 516005
