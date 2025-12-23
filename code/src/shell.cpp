@@ -20,6 +20,8 @@
 
 #include "shell.h"
 #include "pipe.h"
+#include "processor.h"
+#include "config.h"
 
 /***************************************************************/
 /* Statistics.                                                 */
@@ -53,7 +55,7 @@ struct mem_region_t {
 /* memory will be dynamically allocated at initialization */
 std::vector<mem_region_t> MEM_REGIONS;
 
-bool RUN_BIT = true;
+std::unique_ptr<Processor> P;
 
 /***************************************************************/
 /*                                                             */
@@ -127,8 +129,7 @@ void help() {
 /*                                                             */
 /***************************************************************/
 void cycle() {                                                
-  pipe_cycle();
-
+  P->cycle();
   stat_cycles++;
 }
 
@@ -140,14 +141,14 @@ void cycle() {
 /*                                                             */
 /***************************************************************/
 void run(int num_cycles) {                                      
-  if (!RUN_BIT) {
-    printf("Can't simulate, Simulator is halted\n\n");
+  if (P->active_cores_count() == 0) {
+    // printf("Can't simulate, Simulator is halted\n\n");
     return;
   }
 
   printf("Simulating for %d cycles...\n\n", num_cycles);
   for (int i = 0; i < num_cycles; i++) {
-    if (!RUN_BIT) {
+    if (P->active_cores_count() == 0) {
 	    printf("Simulator halted\n\n");
 	    break;
     }
@@ -163,13 +164,13 @@ void run(int num_cycles) {
 /*                                                             */
 /***************************************************************/
 void go() {                                                     
-  if (!RUN_BIT) {
-    printf("Can't simulate, Simulator is halted\n\n");
+  if (P->active_cores_count() == 0) {
+    // printf("Can't simulate, Simulator is halted\n\n");
     return;
   }
 
   printf("Simulating...\n\n");
-  while (RUN_BIT)
+  while (P->active_cores_count() > 0)
     cycle();
   printf("Simulator halted\n\n");
 }
@@ -182,21 +183,34 @@ void go() {
 /*                                                             */
 /***************************************************************/
 void rdump() {
-    int i;
+    int i; 
 
+    auto& pipe = *(P->cores[0]->pipe);
+    printf("CPU 0:\n");
     printf("PC: 0x%08x\n", pipe.PC);
-
     for (i = 0; i < 32; i++) {
         printf("R%d: 0x%08x\n", i, pipe.REGS[i]);
     }
-
     printf("HI: 0x%08x\n", pipe.HI);
     printf("LO: 0x%08x\n", pipe.LO);
+
     printf("Cycles: %u\n", stat_cycles);
     printf("FetchedInstr: %u\n", stat_inst_fetch);
     printf("RetiredInstr: %u\n", stat_inst_retire);
-    printf("IPC: %0.3f\n", ((float) stat_inst_retire) / stat_cycles);
+    float ipc = (stat_cycles > 0) ? ((float) stat_inst_retire) / stat_cycles : 0.0f;
+    printf("IPC: %0.3f\n", ipc);
     printf("Flushes: %u\n", stat_squash);
+
+    for (int k = 1; k < 4; k++) {
+        printf("CPU %d:\n", k);
+        auto& pipe_k = *(P->cores[k]->pipe);
+        printf("PC: 0x%08x\n", pipe_k.PC);
+        for (i = 0; i < 32; i++) {
+            printf("R%d: 0x%08x\n", i, pipe_k.REGS[i]);
+        }
+        printf("HI: 0x%08x\n", pipe_k.HI);
+        printf("LO: 0x%08x\n", pipe_k.LO);
+    }
 }
 
 /***************************************************************/ 
@@ -273,8 +287,8 @@ void get_command() {
    if (scanf("%i %i", &register_no, &register_value) != 2)
       break;
    
-   printf("%i %i\n", register_no, register_value);
-   pipe.REGS[register_no] = register_value;
+   // printf("%i %i\n", register_no, register_value);
+   P->cores[0]->pipe->REGS[register_no] = register_value;
    break;
    
   case 'H':
@@ -282,7 +296,7 @@ void get_command() {
    if (scanf("%i", &register_value) != 1)
       break;
 
-   pipe.HI = register_value; 
+   P->cores[0]->pipe->HI = register_value; 
    break;
   
   case 'L':
@@ -290,7 +304,7 @@ void get_command() {
    if (scanf("%i", &register_value) != 1)
       break;
 
-   pipe.LO = register_value; 
+   P->cores[0]->pipe->LO = register_value; 
    break;
 
   default:
@@ -354,13 +368,11 @@ void load_program(char *program_filename) {
 /************************************************************/
 void initialize(char *program_filename, int num_prog_files) { 
   init_memory();
-  pipe_init();
+  P = std::make_unique<Processor>();
   for (int i = 0; i < num_prog_files; i++) {
     load_program(program_filename);
     while(*program_filename++ != '\0');
   }
-    
-  RUN_BIT = true;
 }
 
 /***************************************************************/

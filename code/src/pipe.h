@@ -77,7 +77,15 @@ struct Pipe_Op {
  * be lost).
  */
 
-struct Pipe_State {
+/* Pipeline Class */
+class Core; // Forward declaration
+
+class Pipeline {
+public:
+    Pipeline(Core* c);
+    
+    Core* core;
+
     /* pipe op currently at the input of the given stage (NULL for none) */
     std::unique_ptr<Pipe_Op> decode_op, execute_op, mem_op, wb_op;
 
@@ -98,35 +106,18 @@ struct Pipe_State {
     /* multiplier stall info */
     int multiplier_stall; /* number of remaining cycles until HI/LO are ready */
 
-    /* place other information here as necessary */
+    /* Helper for branch recovery */
+    void recover(int flush, uint32_t dest);
 
-    /* Constructor - initializes all fields */
-    Pipe_State() : HI(0), LO(0), PC(0x00400000), 
-                   branch_recover(0), branch_dest(0), branch_flush(0),
-                   multiplier_stall(0) {
-        REGS.fill(0);
-    }
+    /* Stage functions */
+    void fetch();
+    void decode();
+    void execute();
+    void mem();
+    void wb();
 };
 
-/* global variable -- pipeline state */
-extern Pipe_State pipe;
-
-/* called during simulator startup */
-void pipe_init();
-
-/* this function calls the others */
-void pipe_cycle();
-
-/* helper: pipe stages can call this to schedule a branch recovery */
-/* flushes 'flush' stages (1 = execute only, 2 = fetch/decode, ...) and then
- * sets the fetch PC to the given destination. */
-void pipe_recover(int flush, uint32_t dest);
-
-/* each of these functions implements one stage of the pipeline */
-void pipe_stage_fetch();
-void pipe_stage_decode();
-void pipe_stage_execute();
-void pipe_stage_mem();
-void pipe_stage_wb();
+/* debug */
+void print_op(Pipe_Op *op);
 
 #endif

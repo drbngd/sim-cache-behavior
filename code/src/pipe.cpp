@@ -9,6 +9,8 @@
 #include "pipe.h"
 #include "shell.h"
 #include "mips.h"
+#include "core.h"
+#include "config.h"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -29,115 +31,64 @@ void print_op(Pipe_Op *op)
         printf("(null)\n");
 }
 
-/* global pipeline state */
-Pipe_State pipe;
-
-void pipe_init()
+Pipeline::Pipeline(Core* c) : core(c), HI(0), LO(0), PC(0x00400000), 
+                             branch_recover(0), branch_dest(0), branch_flush(0),
+                             multiplier_stall(0)
 {
-    pipe = Pipe_State();
+    REGS.fill(0);
 }
 
-void pipe_cycle()
-{
-#ifdef DEBUG
-    printf("\n\n----\n\nPIPELINE:\n");
-    printf("DCODE: "); print_op(pipe.decode_op);
-    printf("EXEC : "); print_op(pipe.execute_op);
-    printf("MEM  : "); print_op(pipe.mem_op);
-    printf("WB   : "); print_op(pipe.wb_op);
-    printf("\n");
-#endif
 
-    pipe_stage_wb();
-    pipe_stage_mem();
-    pipe_stage_execute();
-    pipe_stage_decode();
-    pipe_stage_fetch();
 
-    /* handle branch recoveries */
-    if (pipe.branch_recover) {
-#ifdef DEBUG
-        printf("branch recovery: new dest %08x flush %d stages\n", pipe.branch_dest, pipe.branch_flush);
-#endif
-
-        pipe.PC = pipe.branch_dest;
-
-        if (pipe.branch_flush >= 2) {
-            pipe.decode_op.reset();
-        }
-
-        if (pipe.branch_flush >= 3) {
-            pipe.execute_op.reset();
-        }
-
-        if (pipe.branch_flush >= 4) {
-            pipe.mem_op.reset();
-        }
-
-        if (pipe.branch_flush >= 5) {
-            pipe.wb_op.reset();
-        }
-
-        pipe.branch_recover = 0;
-        pipe.branch_dest = 0;
-        pipe.branch_flush = 0;
-
-        stat_squash++;
-    }
-}
-
-void pipe_recover(int flush, uint32_t dest)
+void Pipeline::recover(int flush, uint32_t dest)
 {
     /* if there is already a recovery scheduled, it must have come from a later
      * stage (which executes older instructions), hence that recovery overrides
      * our recovery. Simply return in this case. */
-    if (pipe.branch_recover) return;
+    if (branch_recover) return;
 
     /* schedule the recovery. This will be done once all pipeline stages simulate the current cycle. */
-    pipe.branch_recover = 1;
-    pipe.branch_flush = flush;
-    pipe.branch_dest = dest;
+    branch_recover = 1;
+    branch_flush = flush;
+    branch_dest = dest;
 }
 
-void pipe_stage_wb()
+void Pipeline::wb()
 {
     /* if there is no instruction in this pipeline stage, we are done */
-    if (!pipe.wb_op)
+    if (!wb_op)
         return;
 
     /* grab the op out of our input slot */
-    Pipe_Op *op = pipe.wb_op.get();
+    Pipe_Op *op = wb_op.get();
 
     /* if this instruction writes a register, do so now */
     if (op->reg_dst != -1 && op->reg_dst != 0) {
-        pipe.REGS[op->reg_dst] = op->reg_dst_value;
+        REGS[op->reg_dst] = op->reg_dst_value;
 #ifdef DEBUG
-        printf("R%d = %08x\n", op->reg_dst, op->reg_dst_value);
+        printf("[Core %d] R%d = %08x\n", core->id, op->reg_dst, op->reg_dst_value);
 #endif
     }
 
-    /* if this was a syscall, perform action */
+    /* internal: if this was a syscall, notify the core */
     if (op->opcode == OP_SPECIAL && op->subop == SUBOP_SYSCALL) {
-        if (op->reg_src1_value == 0xA) {
-            pipe.PC = op->pc; /* fetch will do pc += 4, then we stop with correct PC */
-            RUN_BIT = false;
-        }
+        core->handle_syscall(op);
     }
 
     /* free the op */
-    pipe.wb_op.reset();
+    wb_op.reset();
 
     stat_inst_retire++;
 }
 
-void pipe_stage_mem()
+void Pipeline::mem()
 {
     /* if there is no instruction in this pipeline stage, we are done */
-    if (!pipe.mem_op)
+    if (!mem_op)
         return;
 
     /* grab the op out of our input slot */
-    Pipe_Op *op = pipe.mem_op.get();
+    Pipe_Op *op = mem_op.get();
 
     uint32_t val = 0;
     if (op->is_mem)
@@ -203,14 +154,14 @@ void pipe_stage_mem()
 
         case OP_SH:
 #ifdef DEBUG
-            printf("SH: addr %08x val %04x old word %08x\n", op->mem_addr, op->mem_value & 0xFFFF, val);
+            printf("[Core %d] SH: addr %08x val %04x old word %08x\n", core->id, op->mem_addr, op->mem_value & 0xFFFF, val);
 #endif
             if (op->mem_addr & 2)
                 val = (val & 0x0000FFFF) | (op->mem_value) << 16;
             else
                 val = (val & 0xFFFF0000) | (op->mem_value & 0xFFFF);
 #ifdef DEBUG
-            printf("new word %08x\n", val);
+            printf("[Core %d] new word %08x\n", core->id, val);
 #endif
 
             mem_write_32(op->mem_addr & ~3, val);
@@ -223,57 +174,57 @@ void pipe_stage_mem()
     }
 
     /* clear stage input and transfer to next stage */
-    pipe.wb_op = std::move(pipe.mem_op);
+    wb_op = std::move(mem_op);
 }
 
-void pipe_stage_execute()
+void Pipeline::execute()
 {
     /* if a multiply/divide is in progress, decrement cycles until value is ready */
-    if (pipe.multiplier_stall > 0)
-        pipe.multiplier_stall--;
+    if (multiplier_stall > 0)
+        multiplier_stall--;
 
     /* if downstream stall, return (and leave any input we had) */
-    if (pipe.mem_op)
+    if (mem_op)
         return;
 
     /* if no op to execute, return */
-    if (!pipe.execute_op)
+    if (!execute_op)
         return;
 
     /* grab op and read sources */
-    Pipe_Op *op = pipe.execute_op.get();
+    Pipe_Op *op = execute_op.get();
 
     /* read register values, and check for bypass; stall if necessary */
     int stall = 0;
     if (op->reg_src1 != -1) {
         if (op->reg_src1 == 0)
             op->reg_src1_value = 0;
-        else if (pipe.mem_op && pipe.mem_op->reg_dst == op->reg_src1) {
-            if (!pipe.mem_op->reg_dst_value_ready)
+        else if (mem_op && mem_op->reg_dst == op->reg_src1) {
+            if (!mem_op->reg_dst_value_ready)
                 stall = 1;
             else
-                op->reg_src1_value = pipe.mem_op->reg_dst_value;
+                op->reg_src1_value = mem_op->reg_dst_value;
         }
-        else if (pipe.wb_op && pipe.wb_op->reg_dst == op->reg_src1) {
-            op->reg_src1_value = pipe.wb_op->reg_dst_value;
+        else if (wb_op && wb_op->reg_dst == op->reg_src1) {
+            op->reg_src1_value = wb_op->reg_dst_value;
         }
         else
-            op->reg_src1_value = pipe.REGS[op->reg_src1];
+            op->reg_src1_value = REGS[op->reg_src1];
     }
     if (op->reg_src2 != -1) {
         if (op->reg_src2 == 0)
             op->reg_src2_value = 0;
-        else if (pipe.mem_op && pipe.mem_op->reg_dst == op->reg_src2) {
-            if (!pipe.mem_op->reg_dst_value_ready)
+        else if (mem_op && mem_op->reg_dst == op->reg_src2) {
+            if (!mem_op->reg_dst_value_ready)
                 stall = 1;
             else
-                op->reg_src2_value = pipe.mem_op->reg_dst_value;
+                op->reg_src2_value = mem_op->reg_dst_value;
         }
-        else if (pipe.wb_op && pipe.wb_op->reg_dst == op->reg_src2) {
-            op->reg_src2_value = pipe.wb_op->reg_dst_value;
+        else if (wb_op && wb_op->reg_dst == op->reg_src2) {
+            op->reg_src2_value = wb_op->reg_dst_value;
         }
         else
-            op->reg_src2_value = pipe.REGS[op->reg_src2];
+            op->reg_src2_value = REGS[op->reg_src2];
     }
 
     /* if bypassing requires a stall (e.g. use immediately after load),
@@ -322,21 +273,21 @@ void pipe_stage_execute()
                          */
                         int64_t val = (int64_t)((int32_t)op->reg_src1_value) * (int64_t)((int32_t)op->reg_src2_value);
                         uint64_t uval = (uint64_t)val;
-                        pipe.HI = (uval >> 32) & 0xFFFFFFFF;
-                        pipe.LO = (uval >>  0) & 0xFFFFFFFF;
+                        HI = (uval >> 32) & 0xFFFFFFFF;
+                        LO = (uval >>  0) & 0xFFFFFFFF;
 
                         /* four-cycle multiplier latency */
-                        pipe.multiplier_stall = 4;
+                        multiplier_stall = 4;
                     }
                     break;
                 case SUBOP_MULTU:
                     {
                         uint64_t val = (uint64_t)op->reg_src1_value * (uint64_t)op->reg_src2_value;
-                        pipe.HI = (val >> 32) & 0xFFFFFFFF;
-                        pipe.LO = (val >>  0) & 0xFFFFFFFF;
+                        HI = (val >> 32) & 0xFFFFFFFF;
+                        LO = (val >>  0) & 0xFFFFFFFF;
 
                         /* four-cycle multiplier latency */
-                        pipe.multiplier_stall = 4;
+                        multiplier_stall = 4;
                     }
                     break;
 
@@ -350,58 +301,58 @@ void pipe_stage_execute()
                         div = val1 / val2;
                         mod = val1 % val2;
 
-                        pipe.LO = div;
-                        pipe.HI = mod;
+                        LO = div;
+                        HI = mod;
                     } else {
                         // really this would be a div-by-0 exception
-                        pipe.HI = pipe.LO = 0;
+                        HI = LO = 0;
                     }
 
                     /* 32-cycle divider latency */
-                    pipe.multiplier_stall = 32;
+                    multiplier_stall = 32;
                     break;
 
                 case SUBOP_DIVU:
                     if (op->reg_src2_value != 0) {
-                        pipe.HI = (uint32_t)op->reg_src1_value % (uint32_t)op->reg_src2_value;
-                        pipe.LO = (uint32_t)op->reg_src1_value / (uint32_t)op->reg_src2_value;
+                        HI = (uint32_t)op->reg_src1_value % (uint32_t)op->reg_src2_value;
+                        LO = (uint32_t)op->reg_src1_value / (uint32_t)op->reg_src2_value;
                     } else {
                         /* really this would be a div-by-0 exception */
-                        pipe.HI = pipe.LO = 0;
+                        HI = LO = 0;
                     }
 
                     /* 32-cycle divider latency */
-                    pipe.multiplier_stall = 32;
+                    multiplier_stall = 32;
                     break;
 
                 case SUBOP_MFHI:
                     /* stall until value is ready */
-                    if (pipe.multiplier_stall > 0)
+                    if (multiplier_stall > 0)
                         return;
 
-                    op->reg_dst_value = pipe.HI;
+                    op->reg_dst_value = HI;
                     break;
                 case SUBOP_MTHI:
                     /* stall to respect WAW dependence */
-                    if (pipe.multiplier_stall > 0)
+                    if (multiplier_stall > 0)
                         return;
 
-                    pipe.HI = op->reg_src1_value;
+                    HI = op->reg_src1_value;
                     break;
 
                 case SUBOP_MFLO:
                     /* stall until value is ready */
-                    if (pipe.multiplier_stall > 0)
+                    if (multiplier_stall > 0)
                         return;
 
-                    op->reg_dst_value = pipe.LO;
+                    op->reg_dst_value = LO;
                     break;
                 case SUBOP_MTLO:
                     /* stall to respect WAW dependence */
-                    if (pipe.multiplier_stall > 0)
+                    if (multiplier_stall > 0)
                         return;
 
-                    pipe.LO = op->reg_src1_value;
+                    LO = op->reg_src1_value;
                     break;
 
                 case SUBOP_ADD:
@@ -512,24 +463,24 @@ void pipe_stage_execute()
 
     /* handle branch recoveries at this point */
     if (op->branch_taken)
-        pipe_recover(3, op->branch_dest);
+        recover(3, op->branch_dest);
 
     /* remove from upstream stage and place in downstream stage */
-    pipe.mem_op = std::move(pipe.execute_op);
+    mem_op = std::move(execute_op);
 }
 
-void pipe_stage_decode()
+void Pipeline::decode()
 {
     /* if downstream stall, return (and leave any input we had) */
-    if (pipe.execute_op)
+    if (execute_op)
         return;
 
     /* if no op to decode, return */
-    if (!pipe.decode_op)
+    if (!decode_op)
         return;
 
     /* grab op and remove from stage input */
-    Pipe_Op *op = pipe.decode_op.get();
+    Pipe_Op *op = decode_op.get();
 
     /* set up info fields (source/dest regs, immediate, jump dest) as necessary */
     uint32_t opcode = (op->instruction >> 26) & 0x3F;
@@ -654,24 +605,24 @@ void pipe_stage_decode()
     /* we will handle reg-read together with bypass in the execute stage */
 
     /* place op in downstream slot */
-    pipe.execute_op = std::move(pipe.decode_op);
+    execute_op = std::move(decode_op);
 }
 
-void pipe_stage_fetch()
+void Pipeline::fetch()
 {
     /* if pipeline is stalled (our output slot is not empty), return */
-    if (pipe.decode_op)
+    if (decode_op)
         return;
 
     /* Allocate an op and send it down the pipeline. */
     auto op = std::make_unique<Pipe_Op>();
 
-    op->instruction = mem_read_32(pipe.PC);
-    op->pc = pipe.PC;
-    pipe.decode_op = std::move(op);
+    op->instruction = mem_read_32(PC);
+    op->pc = PC;
+    decode_op = std::move(op);
 
     /* update PC */
-    pipe.PC += 4;
+    PC += 4;
 
     stat_inst_fetch++;
 }
