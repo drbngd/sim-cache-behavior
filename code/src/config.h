@@ -58,6 +58,11 @@
 /* Replace with 0 (LRU), 1 (Random), etc. */
 #define CACHE_REPL_POLICY 0 // LRU
 
+/* L2 Latencies */
+#define L2_HIT_LATENCY 15
+#define L2_TO_DRAM_DELAY 5
+#define DRAM_TO_L2_DELAY 5
+
 /* DRAM Page Policy */
 #define DRAM_PAGE_POLICY 0  // 0 = Open Row, 1 = Closed Row
 

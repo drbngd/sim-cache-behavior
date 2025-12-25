@@ -141,15 +141,40 @@ public:
     // DRAM Reference for Misses
     struct DRAM* dram_ref; // Forward decl
 
+    // Delay Queues for Timing Specs
+    struct Req_Queue_Item {
+        bool is_write;
+        uint32_t addr;
+        int core_id;
+        uint64_t ready_cycle;
+    };
+    std::vector<Req_Queue_Item> req_queue;
+
+    struct Ret_Queue_Item {
+        uint32_t addr;
+        uint64_t ready_cycle;
+    };
+    std::vector<Ret_Queue_Item> ret_queue;
+
     L2Cache(struct DRAM* dram); 
     
     // Returns L2_RET_xxx status
     int access(uint32_t addr, bool is_write, int core_id);
+
+#include <memory> /* for unique_ptr */
+
+// ... (inside class L2Cache)
+
+    // Timing Cycle (processes queues)
+    void cycle(uint64_t current_cycle, std::vector<std::unique_ptr<class Core>>& cores);
+
+    // Handler for DRAM completion
+    void handle_dram_completion(uint32_t addr);
     
     // MSHR Helpers
     int check_mshr(uint32_t addr);
-    int allocate_mshr(uint32_t addr, bool is_write);
-    void complete_mshr(uint32_t addr);
+    int allocate_mshr(uint32_t addr, bool is_write, int core_id);
+    void complete_mshr(uint32_t addr, std::vector<std::unique_ptr<class Core>>& cores);
 };
 
 class L1Cache : public Cache {
@@ -160,6 +185,7 @@ public:
     // Blocking Logic for Phase 3
     bool pending_miss;
     uint32_t pending_miss_addr;
+    uint32_t pending_miss_ready_cycle;
 
     L1Cache(int core_id, L2Cache* l2, uint32_t s, uint32_t w);
     

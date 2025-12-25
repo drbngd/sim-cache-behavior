@@ -1,9 +1,13 @@
 #include "cache.h"
 #include "config.h"
+#include "core.h" // Needed for Core def
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
 #include <cmath>
+
+extern uint32_t stat_cycles; // From shell.cpp
+
 
 /* Base Cache Methods */
 
@@ -167,13 +171,14 @@ int L2Cache::check_mshr(uint32_t addr) {
     return -1;
 }
 
-int L2Cache::allocate_mshr(uint32_t addr, bool is_write) {
+int L2Cache::allocate_mshr(uint32_t addr, bool is_write, int core_id) {
     uint32_t block_addr = addr & ~(block_size - 1);
     for (int i = 0; i < L2_MSHR_SIZE; i++) {
         if (!mshrs[i].valid) {
             mshrs[i].valid = true;
             mshrs[i].address = block_addr;
             mshrs[i].is_write = is_write;
+            mshrs[i].core_id = core_id; // Store requester
             mshrs[i].done = false;
             mshrs[i].ready_cycle = 0;
             return i;
@@ -196,19 +201,16 @@ int L2Cache::access(uint32_t addr, bool is_write, int core_id) {
     }
 
     // 3. New Miss: Allocate MSHR
-    int mshr_idx = allocate_mshr(addr, is_write);
+    int mshr_idx = allocate_mshr(addr, is_write, core_id); 
     if (mshr_idx != -1) {
-        // Enqueue to DRAM
-        if (dram_ref) {
-#ifdef DEBUG
-            printf("[L2] Enqueuing DRAM req for %08x\n", addr);
-#endif
-            dram_ref->enqueue(is_write, addr, core_id, DRAM_Req::SRC_MEMORY);
-        } else {
-#ifdef DEBUG
-            printf("[L2] ERROR: DRAM ref is NULL for %08x\n", addr);
-#endif
-        }
+        // Enqueue to Request Queue (5 cycle delay)
+        Req_Queue_Item item;
+        item.is_write = is_write;
+        item.addr = addr;
+        item.core_id = core_id;
+        item.ready_cycle = stat_cycles + L2_TO_DRAM_DELAY;
+        req_queue.push_back(item);
+        
         return L2_MISS; 
     }
 
@@ -216,32 +218,67 @@ int L2Cache::access(uint32_t addr, bool is_write, int core_id) {
     return L2_BUSY;
 }
 
-void L2Cache::complete_mshr(uint32_t addr) {
-    uint32_t block_addr = addr & ~(block_size - 1);
-    for (int i = 0; i < L2_MSHR_SIZE; i++) {
-        if (mshrs[i].valid && mshrs[i].address == block_addr) {
-            mshrs[i].valid = false;
-            // Also install data into L2? 
-            // Phase 3: We assume "complete" means data arrived and is installed.
-            // But we don't have data payload from DRAM yet (functional only).
-            // So we just clear MSHR to allow future accesses.
-            // Also, we should theoretically install the block in L2 sets.
-            // For now, let's just clear MSHR.
-            // Actually, if we don't install, next access will miss again -> MSHR alloc -> loop.
-            // So we MUST install.
-            bool dirty_evicted;
-            uint32_t evicted_addr;
-            install(addr, nullptr, &dirty_evicted, &evicted_addr, nullptr);
-            
-            // Note: Since L2 is NINE, we don't necessarily Back-Invalidate L1s on eviction yet (Phase 4).
+void L2Cache::handle_dram_completion(uint32_t addr) {
+    // DRAM returned data. Enqueue to Return Queue (5 cycle delay).
+    Ret_Queue_Item item;
+    item.addr = addr;
+    item.ready_cycle = stat_cycles + DRAM_TO_L2_DELAY;
+    ret_queue.push_back(item);
+}
+
+void L2Cache::cycle(uint64_t current_cycle, std::vector<std::unique_ptr<Core>>& cores) {
+    // 1. Process Request Queue (L2 -> DRAM)
+    for (auto it = req_queue.begin(); it != req_queue.end(); ) {
+        if (current_cycle >= it->ready_cycle) {
+            // Send to DRAM
+            if (dram_ref) {
+                dram_ref->enqueue(it->is_write, it->addr, it->core_id, DRAM_Req::SRC_MEMORY);
+            }
+            it = req_queue.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // 2. Process Return Queue (DRAM -> L2)
+    for (auto it = ret_queue.begin(); it != ret_queue.end(); ) {
+        if (current_cycle >= it->ready_cycle) {
+            // Complete MSHR and Install
+            complete_mshr(it->addr, cores);
+            it = ret_queue.erase(it);
+        } else {
+            ++it;
         }
     }
 }
 
+void L2Cache::complete_mshr(uint32_t addr, std::vector<std::unique_ptr<Core>>& cores) {
+    uint32_t block_addr = addr & ~(block_size - 1);
+    for (int i = 0; i < L2_MSHR_SIZE; i++) {
+        if (mshrs[i].valid && mshrs[i].address == block_addr) {
+            mshrs[i].valid = false;
+            
+            // Install in L2
+            bool dirty_evicted;
+            uint32_t evicted_addr;
+            install(addr, nullptr, &dirty_evicted, &evicted_addr, nullptr);
+            
+            // Wake up L1
+            // Use stored core_id
+            int cid = mshrs[i].core_id;
+            if (cid >= 0 && cid < cores.size()) {
+                cores[cid]->icache.fill(addr);
+                cores[cid]->dcache.fill(addr);
+            }
+        }
+    }
+}
+
+
 /* L1 Cache Methods */
 
 L1Cache::L1Cache(int core_id, L2Cache* l2, uint32_t s, uint32_t w) 
-    : Cache(s, w, BLOCK_SIZE), id(core_id), l2_ref(l2), pending_miss(false), pending_miss_addr(0) 
+    : Cache(s, w, BLOCK_SIZE), id(core_id), l2_ref(l2), pending_miss(false), pending_miss_addr(0), pending_miss_ready_cycle(0)
 {
     // Parent constructor handles initialization
 }
@@ -251,11 +288,18 @@ bool L1Cache::access(uint32_t addr, bool is_write, bool is_data_cache) {
     printf("[L1 Core %d] Access Addr=%08x write=%d pending=%d\n", id, addr, is_write, pending_miss);
 #endif
     // 1. Check for Pending Miss
+    // 1. Check for Pending Miss
     if (pending_miss) {
+        // Check if latency is satisfied
+        if (stat_cycles >= pending_miss_ready_cycle) {
+             fill(pending_miss_addr); // Clears pending_miss
+             // Fall through to probe (which will now HIT)
+        } else {
 #ifdef DEBUG
-        printf("[L1 Core %d] STALL: Pending miss for %08x (Req: %08x)\n", id, pending_miss_addr, addr);
+            printf("[L1 Core %d] STALL: Pending miss for %08x (Req: %08x) ReadyAt: %u Curr: %u\n", id, pending_miss_addr, addr, pending_miss_ready_cycle, stat_cycles);
 #endif
-        return false;
+            return false;
+        }
     }
 
     // 2. Check Hit
@@ -270,30 +314,12 @@ bool L1Cache::access(uint32_t addr, bool is_write, bool is_data_cache) {
     int l2_status = l2_ref->access(addr, is_write, id);
     
     if (l2_status == L2_HIT) {
-        // L2 Hit! Simulate transfer.
-        // For simple cycle sim: we stall 1 cycle then fill.
-        // Because access() returns false, pipeline stalls.
-        // We set pending_miss = true, but we also immediately call fill() logic?
-        // NO, if we set pending_miss=true, rely on fill() to clear it.
-        // Since we are inside access, calling fill() recursively is weird but OK if separate.
-        // Better: Set pending_miss = true. Then "schedule" a fill?
-        // Simpler: Just Fill NOW and stall 1 cycle.
-        
-        // Actually, if we fill NOW, the next cycle will probe and HIT.
-        // So we set pending_miss = true (to stall current frame), 
-        // and rely on a mechanism to unset it.
-        
-        // HACK for Phase 2: Just fill immediately and return false (Stall 1 cycle).
-        // Next cycle: pending_miss is FALSE? No wait. 
-        // If we set pending_miss=true, who clears it? fill().
-        // So call fill() immediately.
-        
+        // L2 Hit! 
         pending_miss = true;
         pending_miss_addr = addr;
+        pending_miss_ready_cycle = stat_cycles + L2_HIT_LATENCY;
         
-        fill(addr); // Clears pending_miss
-        
-        return false; // Stall this cycle (L2 Access Latency = 1 cycle penalty)
+        return false; // Stall this cycle and wait for latency
     }
     else if (l2_status == L2_MISS) {
 #ifdef DEBUG

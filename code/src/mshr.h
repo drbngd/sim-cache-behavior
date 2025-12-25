@@ -1,16 +1,19 @@
 #ifndef _MSHR_H_
 #define _MSHR_H_
 
+#include "config.h"
 #include <cstdint>
 
 struct MSHR {
     bool valid;
-    uint32_t address; /* Block Aligned Address */
+    bool done;
+    uint32_t address;
     bool is_write;
-    bool done;        /* Set true when data returns from memory */
-    uint32_t ready_cycle; /* Cycle when data is ready to be used */
+    
+    // Requester ID for callback
+    int core_id;
 
-    MSHR() : valid(false), address(0), is_write(false), done(false), ready_cycle(0) {}
+    uint64_t ready_cycle;
 };
 
 #endif

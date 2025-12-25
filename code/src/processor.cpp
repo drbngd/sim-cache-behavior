@@ -26,15 +26,13 @@ void Processor::cycle() {
     
     if (completed_req.valid) {
         // Data returned from Memory
-        // 1. Update L2 (Clear MSHR and Install)
-        l2_cache.complete_mshr(completed_req.addr);
-        
-        // 2. Update L1 (Wakeup Core)
-        if (completed_req.core_id >= 0 && completed_req.core_id < NUM_CORES) {
-             cores[completed_req.core_id]->icache.fill(completed_req.addr);
-             cores[completed_req.core_id]->dcache.fill(completed_req.addr);
-        }
+        // Queue into L2 Return Queue (5 cycle delay)
+        l2_cache.handle_dram_completion(completed_req.addr);
+        // Note: L1 update happens after L2 delay in complete_mshr
     }
+
+    // Drive L2 Cache Timing
+    l2_cache.cycle(stat_cycles, cores);
 
     /* 2. Tick all cores */
     for (int i = 0; i < NUM_CORES; i++) {
