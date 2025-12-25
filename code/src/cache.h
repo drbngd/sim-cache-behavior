@@ -31,6 +31,12 @@ enum InclusionPolicy {
     INCL_NINE = 2 /* Non-Inclusive Non-Exclusive */
 };
 
+enum L2_Access_Status {
+    L2_BUSY = 0,
+    L2_HIT = 1,
+    L2_MISS = 2
+};
+
 struct CacheBlock {
     uint32_t tag;
     MESI_State state;
@@ -137,8 +143,8 @@ public:
 
     L2Cache(struct DRAM* dram); 
     
-    // Returns true if hit (or handled), false if blocked/miss-stall
-    bool access(uint32_t addr, bool is_write, int core_id);
+    // Returns L2_RET_xxx status
+    int access(uint32_t addr, bool is_write, int core_id);
     
     // MSHR Helpers
     int check_mshr(uint32_t addr);

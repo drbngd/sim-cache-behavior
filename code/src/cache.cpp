@@ -182,17 +182,17 @@ int L2Cache::allocate_mshr(uint32_t addr, bool is_write) {
     return -1; // Full
 }
 
-bool L2Cache::access(uint32_t addr, bool is_write, int core_id) {
+int L2Cache::access(uint32_t addr, bool is_write, int core_id) {
     // 1. Check Cache Hit
     if (is_write) {
-        if (probe_write(addr, nullptr)) return true; // Hit
+        if (probe_write(addr, nullptr)) return L2_HIT; // Hit
     } else {
-        if (probe_read(addr) != nullptr) return true; // Hit
+        if (probe_read(addr) != nullptr) return L2_HIT; // Hit
     }
 
     // 2. Miss: Check MSHRs (Merge)
     if (check_mshr(addr) != -1) {
-        return true; // Request already pending (merged)
+        return L2_MISS; // Request already pending (merged)
     }
 
     // 3. New Miss: Allocate MSHR
@@ -209,11 +209,11 @@ bool L2Cache::access(uint32_t addr, bool is_write, int core_id) {
             printf("[L2] ERROR: DRAM ref is NULL for %08x\n", addr);
 #endif
         }
-        return true; 
+        return L2_MISS; 
     }
 
     // 4. MSHRs Full: Stall
-    return false;
+    return L2_BUSY;
 }
 
 void L2Cache::complete_mshr(uint32_t addr) {
@@ -267,8 +267,35 @@ bool L1Cache::access(uint32_t addr, bool is_write, bool is_data_cache) {
     
     // 3. Handle Miss
     // Issue to L2 (Pass core_id)
-    bool l2_accepted = l2_ref->access(addr, is_write, id);
-    if (l2_accepted) {
+    int l2_status = l2_ref->access(addr, is_write, id);
+    
+    if (l2_status == L2_HIT) {
+        // L2 Hit! Simulate transfer.
+        // For simple cycle sim: we stall 1 cycle then fill.
+        // Because access() returns false, pipeline stalls.
+        // We set pending_miss = true, but we also immediately call fill() logic?
+        // NO, if we set pending_miss=true, rely on fill() to clear it.
+        // Since we are inside access, calling fill() recursively is weird but OK if separate.
+        // Better: Set pending_miss = true. Then "schedule" a fill?
+        // Simpler: Just Fill NOW and stall 1 cycle.
+        
+        // Actually, if we fill NOW, the next cycle will probe and HIT.
+        // So we set pending_miss = true (to stall current frame), 
+        // and rely on a mechanism to unset it.
+        
+        // HACK for Phase 2: Just fill immediately and return false (Stall 1 cycle).
+        // Next cycle: pending_miss is FALSE? No wait. 
+        // If we set pending_miss=true, who clears it? fill().
+        // So call fill() immediately.
+        
+        pending_miss = true;
+        pending_miss_addr = addr;
+        
+        fill(addr); // Clears pending_miss
+        
+        return false; // Stall this cycle (L2 Access Latency = 1 cycle penalty)
+    }
+    else if (l2_status == L2_MISS) {
 #ifdef DEBUG
         printf("[L1 Core %d] MISS: L2 Accepted %08x. Entering Pending.\n", id, addr);
 #endif

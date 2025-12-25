@@ -33,15 +33,8 @@
 #define DRAM_ACT_CMD_BUS_BUSY_CYCLES 4 /* Time on Command Bus (ACT) */
 #define DRAM_RDWR_CMD_BUS_BUSY_CYCLES 4 /* Time on Command Bus (READ, WRITE) */
 #define DRAM_RDWR_DATA_BUS_BUSY_CYCLES 50 /* Time on Data Bus */
+#define DRAM_RDWR_BANK_BUSY_CYCLES 100 /* Bank Operation Latencies (Bank Busy Time) */
 
-/* Bank Operation Latencies (Bank Busy Time) */
-#define DRAM_RDWR_BANK_BUSY_CYCLES 100
-/* Latencies derived from Spec */
-/* Bus Occupancy per Cmd = 4 */
-/* Latencies derived from Spec */
-/* Hit: Read/Write + BankBusy(100) */
-/* Closed: Act + Read/Write + BankBusy(100) */
-/* Conflict: Pre + Act + Read/Write + BankBusy(100) */
 
 /* Cache Configuration */
 /* L1 Instruction Cache (8KB, 4-way, 32B) */
